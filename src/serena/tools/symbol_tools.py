@@ -31,8 +31,19 @@ def _sanitize_symbol_dict(symbol_dict: dict[str, Any]) -> dict[str, Any]:
         symbol_dict["relative_path"] = s_relative_path
     symbol_dict.pop("location", None)
     # also remove name, name_path should be enough
-    symbol_dict.pop("name")
+    symbol_dict.pop("name", None)
     return symbol_dict
+
+
+def _sanitize_unified_symbol_for_json(symbol: dict[str, Any]) -> dict[str, Any]:
+    """
+    Sanitize UnifiedSymbolInformation for JSON serialization by removing circular references.
+    """
+    sanitized = copy(symbol)
+    # Remove parent and children to avoid circular references
+    sanitized.pop("parent", None)
+    sanitized.pop("children", None)
+    return sanitized
 
 
 class RestartLanguageServerTool(Tool, ToolMarkerOptional):
@@ -209,6 +220,85 @@ class FindReferencingSymbolsTool(Tool, ToolMarkerSymbolicRead):
                 ref_dict["content_around_reference"] = content_around_ref.to_display_string()
             reference_dicts.append(ref_dict)
         result = json.dumps(reference_dicts)
+        return self._limit_length(result, max_answer_chars)
+
+
+class FindWorkspaceSymbolTool(Tool, ToolMarkerSymbolicRead):
+    """
+    Finds symbols across the entire workspace using LSP workspace/symbol request.
+    """
+
+    def apply(self, query: str, max_answer_chars: int = -1) -> str:
+        """
+        A direct passthrough to the LSP workspace/symbol request. This finds symbols across the entire
+        workspace that match the given query string. The query is interpreted by the language server
+        and typically supports substring matching on symbol names.
+
+        This is a low-level LSP operation that provides raw workspace symbol results. For more advanced
+        symbol searching with name path patterns, consider using the find_symbol tool instead.
+
+        :param query: The query string to search for symbols. Language servers typically support substring
+            matching on symbol names. Empty string may return all symbols (language server dependent).
+        :param max_answer_chars: Max characters for the JSON result. If exceeded, no content is returned.
+            -1 means the default value from the config will be used.
+        :return: JSON list of workspace symbols matching the query, or empty list if none found.
+        """
+        if not self.agent.is_using_language_server():
+            raise Exception("Cannot use FindWorkspaceSymbolTool; agent is not in language server mode.")
+
+        language_server = self.agent.language_server
+        assert language_server is not None
+
+        response = language_server.request_workspace_symbol(query)
+        if response is None:
+            response = []
+
+        # Sanitize symbols to avoid circular references from parent/children relationships
+        result_dicts = [_sanitize_unified_symbol_for_json(symbol) for symbol in response]
+        result = json.dumps(result_dicts)
+        return self._limit_length(result, max_answer_chars)
+
+
+class FindDocumentSymbolTool(Tool, ToolMarkerSymbolicRead):
+    """
+    Finds symbols in a specific document using LSP textDocument/documentSymbol request.
+    """
+
+    def apply(self, relative_path: str, include_body: bool = False, max_answer_chars: int = -1) -> str:
+        """
+        A direct passthrough to the LSP textDocument/documentSymbol request. This finds all symbols
+        in the specified document and returns them in the raw LSP format.
+
+        This is a low-level LSP operation that provides raw document symbol results. For a high-level
+        overview of top-level symbols, consider using the get_symbols_overview tool instead.
+
+        :param relative_path: The relative path to the file to get symbols from.
+        :param include_body: Whether to include the source code body of symbols in the results.
+            Use judiciously as this significantly increases response size.
+        :param max_answer_chars: Max characters for the JSON result. If exceeded, no content is returned.
+            -1 means the default value from the config will be used.
+        :return: JSON object with 'all_symbols' and 'root_symbols' keys containing symbol hierarchies.
+        """
+        if not self.agent.is_using_language_server():
+            raise Exception("Cannot use FindDocumentSymbolTool; agent is not in language server mode.")
+
+        language_server = self.agent.language_server
+        assert language_server is not None
+
+        file_path = os.path.join(self.project.project_root, relative_path)
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"File {relative_path} does not exist in the project.")
+        if os.path.isdir(file_path):
+            raise ValueError(f"Expected a file path, but got a directory path: {relative_path}")
+
+        all_symbols, root_symbols = language_server.request_document_symbols(relative_path, include_body=include_body)
+
+        # Sanitize symbols to avoid circular references from parent/children relationships
+        all_symbols_dicts = [_sanitize_unified_symbol_for_json(symbol) for symbol in all_symbols]
+        root_symbols_dicts = [_sanitize_unified_symbol_for_json(symbol) for symbol in root_symbols]
+
+        result_dict = {"all_symbols": all_symbols_dicts, "root_symbols": root_symbols_dicts}
+        result = json.dumps(result_dict)
         return self._limit_length(result, max_answer_chars)
 
 

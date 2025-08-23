@@ -8,7 +8,6 @@ import os
 import pathlib
 import shutil
 import threading
-import uuid
 from pathlib import PurePath
 
 from overrides import override
@@ -54,12 +53,13 @@ class EclipseJDTLS(SolidLanguageServer):
         self.runtime_dependency_paths = runtime_dependency_paths
 
         # ws_dir is the workspace directory for the EclipseJDTLS server
+        project_name = os.path.basename(repository_root_path)
         ws_dir = str(
             PurePath(
                 solidlsp_settings.ls_resources_dir,
                 "EclipseJDTLS",
                 "workspaces",
-                uuid.uuid4().hex,
+                project_name,
             )
         )
 
@@ -114,7 +114,7 @@ class EclipseJDTLS(SolidLanguageServer):
                 "-XX:AdaptiveSizePolicyWeight=90",
                 "-Dsun.zip.disableMemoryMapping=true",
                 "-Djava.lsp.joinOnCompletion=true",
-                "-Xmx3G",
+                "-Xmx4G",
                 "-Xms100m",
                 "-Xlog:disable",
                 "-Dlog.level=ALL",
