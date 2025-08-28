@@ -37,13 +37,36 @@ def _sanitize_symbol_dict(symbol_dict: dict[str, Any]) -> dict[str, Any]:
 
 def _sanitize_unified_symbol_for_json(symbol: dict[str, Any]) -> dict[str, Any]:
     """
-    Sanitize UnifiedSymbolInformation for JSON serialization by removing circular references.
+    Sanitize UnifiedSymbolInformation for JSON serialization by removing circular references
+    and converting 0-based LSP positions to 1-based positions.
     """
     sanitized = copy(symbol)
     # Remove parent and children to avoid circular references
     sanitized.pop("parent", None)
     sanitized.pop("children", None)
+    
+    # Convert 0-based LSP positions to 1-based positions
+    _convert_positions_to_1_based(sanitized)
+    
     return sanitized
+
+
+def _convert_positions_to_1_based(obj: Any) -> None:
+    """
+    Recursively walk through an object and convert all line and character properties
+    from 0-based (LSP format) to 1-based format.
+    """
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            # Check if this is a line or character property (case-insensitive)
+            if isinstance(value, int) and key.lower() in ['line', 'character']:
+                obj[key] = value + 1
+            else:
+                # Recursively process nested objects
+                _convert_positions_to_1_based(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            _convert_positions_to_1_based(item)
 
 
 class RestartLanguageServerTool(Tool, ToolMarkerOptional):
